@@ -25,9 +25,8 @@ Notes
 - The authors report substantial speedups (multiple×) while maintaining quality; see the paper and project page for quantitative and qualitative results.
 
 Usage
-- Connect the SPEED node output to `KSamplerAdvanced` like any other custom node in ComfyUI.
+- Connect the `Sampler SPEED (Spectral Progressive)` output to `SamplerCustomAdvanced` like any other custom node in ComfyUI.
 - Place this folder under your ComfyUI `custom_nodes` directory, then restart ComfyUI.
-- The node is meant to be easy to wire up: pick the `Sampler SPEED (Spectral Progressive)`, sampler into `SamplerCustomAdvanced`, and use your normal prompt/model flow.
 
 Inputs
 - `start_scale`: the first resolution fraction. `0.5` means the sampler starts at half resolution, so it does the earliest denoising work on a smaller image.
