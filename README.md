@@ -40,8 +40,8 @@ Inputs
 
 - `start_scale`: the first resolution fraction. `0.5` means the sampler starts at half resolution, so it does the earliest denoising work on a smaller image.
 - `mid_scale`: the second resolution fraction. `0.75` means it expands to 75% resolution before going to full size.
-- `transition_1`: when the first expansion happens. Higher values delay the first jump; lower values make it happen earlier.
-- `transition_2`: when the second expansion happens. Higher values delay the final jump to full resolution; lower values move it earlier.
+- `transition_1`: Controls the jump to mid-scale; lower values delay the expansion, forcing the model to spend more steps inside the low starting resolution.
+- `transition_2`: Controls the jump to full-scale; setting this too low delays the final expansion, forcing the model to bake fine textures into a mid scale latent which stretches into blocky artifacts.
 
 Credits & license
 
