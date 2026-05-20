@@ -29,6 +29,7 @@ Notes
 
 - Spectral Progressive Diffusion (SPEED) progressively increases resolution and injects higher-frequency components along the denoising trajectory, enabling training-free acceleration and a light fine-tuning recipe.
 - The authors report substantial speedups (multiple×) while maintaining quality; see the paper and project page for quantitative and qualitative results.
+- Personally i recommend using `transition_1` value of `0.8` and `transition_2` value of `0.7`. at 1.4x speed up for anima after many tries.
 
 Usage
 
