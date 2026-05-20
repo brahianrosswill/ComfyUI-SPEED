@@ -26,8 +26,9 @@ Notes
 - The authors report substantial speedups (multiple×) while maintaining quality; see the paper and project page for quantitative and qualitative results.
 
 Usage
-- This folder contains `speed_sampler.py` (the ComfyUI custom node implementation). Inspect that file for available parameters and node name.
-- To install: place this folder under your ComfyUI `custom_nodes` directory (if not already), then restart ComfyUI.
+- Connect the SPEED node output to `KSamplerAdvanced` like any other custom node in ComfyUI.
+- Place this folder under your ComfyUI `custom_nodes` directory, then restart ComfyUI.
+- The node is meant to be easy to wire up: pick the SPEED node, connect its output into `KSamplerAdvanced`, and use your normal prompt/model flow.
 
 Credits & license
 - This implementation links to and builds on the ideas from "Spectral Progressive Diffusion for Efficient Image and Video Generation" by Howard Xiao, Brian Chao, Lior Yariv, and Gordon Wetzstein. Please see the original project page and paper for full details, authorship, and license information.
