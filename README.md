@@ -11,12 +11,11 @@ Key references
 
 Summary
 
-Speed comparison (Anima)
+Speed comparison (Anima, using the current default input config)
 
-| Method | Wall-clock (s) | Speedup | Example |
-|---|---:|---:|---|
-| Baseline (standard sampler) | 26.43 | 1.00× | ![Original](images/anima_original.png)
-| SPEED sampler (this node) | 14.38 | 1.84× | ![SPEED](images/anima_speed.png)
+| SPEED sampler (this node) | Baseline (standard sampler) |
+|---|---|
+| ![SPEED](images/anima_speed.png)<br><br>**14.38s**<br>**1.84× faster** | ![Original](images/anima_original.png)<br><br>**26.43s**<br>**1.00×** |
 
 Notes
 - **Artifacts:** This implementation can produce visible artifacts on some outputs; results may vary by model and prompt. Inspect the example images above for a representative comparison.
