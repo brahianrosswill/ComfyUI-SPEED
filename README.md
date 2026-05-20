@@ -30,6 +30,12 @@ Usage
 - Place this folder under your ComfyUI `custom_nodes` directory, then restart ComfyUI.
 - The node is meant to be easy to wire up: pick the SPEED node, connect its output into `KSamplerAdvanced`, and use your normal prompt/model flow.
 
+Inputs
+- `start_scale`: the first resolution fraction. `0.5` means the sampler starts at half resolution, so it does the earliest denoising work on a smaller image.
+- `mid_scale`: the second resolution fraction. `0.75` means it expands to 75% resolution before going to full size.
+- `transition_1`: when the first expansion happens. Higher values delay the first jump; lower values make it happen earlier.
+- `transition_2`: when the second expansion happens. Higher values delay the final jump to full resolution; lower values move it earlier.
+
 Credits & license
 - This implementation links to and builds on the ideas from "Spectral Progressive Diffusion for Efficient Image and Video Generation" by Howard Xiao, Brian Chao, Lior Yariv, and Gordon Wetzstein. Please see the original project page and paper for full details, authorship, and license information.
 
