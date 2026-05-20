@@ -64,14 +64,32 @@ def spectral_expand(model_sampling, x_lo, sigma_i, scale_lo, scale_hi, target_h,
 
     xi = dct2(x_lo_4d.float())
 
-    # ── EXACT MATH APPLIED DIRECTLY TO SIGMA ──
-    # No shifting/unshifting required. ComfyUI's sigma is the exact noise ratio.
     sigma_val = float(sigma_i)
-    r = scale_hi / scale_lo 
-    
-    # Paper Eq 5 & 6 substituting sigma
-    sigma_aligned = (r * sigma_val) / (1.0 + (r - 1.0) * sigma_val) 
-    kappa = r / (1.0 + (r - 1.0) * sigma_val) 
+    r = scale_hi / scale_lo
+
+    # Determine the interpolation factor t ∈ [0, 1].
+    # The paper's flow-matching formulas (Eq 5-6) work with the interpolation
+    # factor t where x_t = (1-t)*x_0 + t*noise.
+    #   Anima/Flux/SD3: σ = interpolation factor directly → t = σ
+    #   CosmosRFlow:    σ = t/(1-t)                     → t = σ/(1+σ)
+    with torch.no_grad():
+        is_cosmos = float(model_sampling.sigma_max) > 1.0
+    if is_cosmos:
+        t = sigma_val / (1.0 + sigma_val)
+    else:
+        t = sigma_val
+
+    # Paper Eq 5 & 6 — kappa corrects for amplitude reduction from
+    # zero-padded DCT upsampling, t_aligned is the effective noise level
+    # at the higher resolution.
+    t_aligned = (r * t) / (1.0 + (r - 1.0) * t)
+    kappa = r / (1.0 + (r - 1.0) * t)
+
+    # Convert t_aligned back to σ for the ODE solver
+    if is_cosmos:
+        sigma_aligned = t_aligned / (1.0 - t_aligned)
+    else:
+        sigma_aligned = t_aligned 
 
     xi_new = torch.zeros(x_lo_4d.shape[0], C, h_hi, w_hi,
                          device=x_lo.device, dtype=torch.float32)
@@ -82,10 +100,17 @@ def spectral_expand(model_sampling, x_lo, sigma_i, scale_lo, scale_hi, target_h,
     high_mask[:, :, h_lo:, :] = 1.0
     high_mask[:, :, :h_lo, w_lo:] = 1.0
     
-    # Inject noise perfectly matching the solver's current sigma!
-    xi_new = xi_new + high_mask * sigma_val * noise
+    # Inject noise at the paper's flow-matching timestep t ∈ [0, 1].
+    # Paper Step II: noise drawn from N(0, t_i^2 * I) in the frequency domain.
+    xi_new = xi_new + high_mask * t * noise
 
     x_new_4d = idct2(xi_new).to(x_lo.dtype)
+    # kappa corrects for amplitude reduction from zero-padded DCT upsampling.
+    # Because DCT matrices are orthonormal at each size, zero-padding DCT coeffs
+    # and IDCT-ing at the larger size spreads the same energy over more pixels,
+    # reducing per-pixel amplitude by 1/r. The paper Eq 5 applies kappa to the
+    # full IDCT result to compensate: for t→0 (clean), kappa→r, restoring the
+    # original amplitude. Without this, the upsampled low-freq content is washed out.
     x_new_4d = kappa * x_new_4d
 
     if T is not None:
