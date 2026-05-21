@@ -18,12 +18,11 @@ Workflow
 
 Speed comparison (Anima, using the current default input config)
 
-| SPEED sampler (this node)                                              | Baseline (standard sampler)                                           |
+| SPEED sampler (this node)                                              | Baseline (euler sampler)                                              |
 | ---------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| ![SPEED](images/anima_speed.png)<br><br>**14.38s**<br>**1.84× faster** | ![Original](images/anima_original.png)<br><br>**26.43s**<br>**1.00×** |
+| `base_sampler=euler`<br>`start_scale=0.50`<br>`mid_scale=0.75`<br>`transition_1=0.80`<br>`transition_2=0.60`<br>`taper=8`<br><br>![SPEED](images/anima_speed.png)<br><br>**14.55s**<br>**1.82× faster** | ![Original](images/anima_original.png)<br><br>**26.51s**<br>**1.00×** |
 
 Notes
-
 - **Artifacts:** This implementation can produce visible artifacts on some outputs; results may vary by model and prompt. Inspect the example images above for a representative comparison. `taper` (default `8`) crossfades the DCT seam to reduce ringing at transitions; set `taper=0` for the original hard-truncation behaviour.
 - **Torch compile:** Compiling with `torch.compile` did not improve performance for this implementation and in our tests made sampling slower than running without it. It may be possible for others to make the node work with `torch.compile`, but this remains a known / open issue.
 - Spectral Progressive Diffusion (SPEED) progressively increases resolution and injects higher-frequency components along the denoising trajectory, enabling training-free acceleration and a light fine-tuning recipe.
