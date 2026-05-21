@@ -24,7 +24,7 @@ Speed comparison (Anima, using the current default input config)
 
 Notes
 
-- **Artifacts:** This implementation can produce visible artifacts on some outputs; results may vary by model and prompt. Inspect the example images above for a representative comparison.
+- **Artifacts:** This implementation can produce visible artifacts on some outputs; results may vary by model and prompt. Inspect the example images above for a representative comparison. `taper` (default `8`) crossfades the DCT seam to reduce ringing at transitions; set `taper=0` for the original hard-truncation behaviour.
 - **Torch compile:** Compiling with `torch.compile` did not improve performance for this implementation and in our tests made sampling slower than running without it. It may be possible for others to make the node work with `torch.compile`, but this remains a known / open issue.
 - Spectral Progressive Diffusion (SPEED) progressively increases resolution and injects higher-frequency components along the denoising trajectory, enabling training-free acceleration and a light fine-tuning recipe.
 - Personally i recommend using `transition_1` value of `0.8` and `transition_2` value of `0.7`. at 1.4x speed up for anima after many tries.
@@ -36,10 +36,12 @@ Usage
 
 Inputs
 
+- `base_sampler`: which underlying ODE solver to use. Any sampler in `comfy.k_diffusion.sampling` is supported (`euler`, `euler_ancestral`, `heun`, `dpmpp_2m`, `dpmpp_3m_sde`, `er_sde`, `res_multistep`, `uni_pc`, `ipndm`, …). `euler` is the original SPEED behaviour. Multistep solvers reset to first-order at each SPEED transition (solver state across a resolution change is invalid anyway).
 - `start_scale`: the first resolution fraction. `0.5` means the sampler starts at half resolution, so it does the earliest denoising work on a smaller image.
 - `mid_scale`: the second resolution fraction. `0.75` means it expands to 75% resolution before going to full size.
 - `transition_1`: Controls the jump to mid-scale; lower values delay the expansion, forcing the model to spend more steps inside the low starting resolution.
 - `transition_2`: Controls the jump to full-scale; setting this too low delays the final expansion, forcing the model to bake fine textures into a mid scale latent which stretches into blocky artifacts.
+- `taper`: DCT-bin width of the cosine crossfade at the preserved↔noise boundary. `0` reproduces the original hard truncation (more ringing); higher values smooth the seam at the cost of slightly more low-pass. Default `8`.
 
 Credits & license
 
