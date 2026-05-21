@@ -46,6 +46,7 @@ Inputs
 Credits & license
 
 - This implementation links to and builds on the ideas from "Spectral Progressive Diffusion for Efficient Image and Video Generation" by Howard Xiao, Brian Chao, Lior Yariv, and Gordon Wetzstein. Please see the original project page and paper for full details, authorship, and license information.
+- Thanks to [acidmiku](https://github.com/acidmiku) for contributing the pluggable sampler dispatch, cosine taper crossfade, and DCT matrix cache.
 
 BibTeX
 
