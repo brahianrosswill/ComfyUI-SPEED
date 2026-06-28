@@ -1,140 +1,172 @@
-"""Math sanity tests for SPEED's DCT helpers + spectral_expand.
+"""Math sanity tests for SPEED spectral utilities.
 
+Based on https://github.com/howardhx/speed
 Run from the repo root with:
   python -m unittest tests.test_math -v
-
-Doesn't require ComfyUI or a model — pure tensor math.
 """
-import sys
+import importlib.util as _iu
 import pathlib
+import sys
 import unittest
 
-# Allow running without the comfy_api/comfy modules (the import at the top of
-# speed_sampler.py would otherwise fail). Stub the missing modules so we can
-# import the pure-math helpers.
-class _Stub:
-    def __getattr__(self, _name):
-        raise AttributeError("comfy.* not available in unit test environment")
+import numpy as np
+import torch
 
-for mod_name in ("comfy", "comfy.samplers", "comfy.utils", "comfy_api",
-                 "comfy_api.latest"):
-    sys.modules.setdefault(mod_name, _Stub())
-# comfy_api.latest.io is imported by name; needs an object with .ComfyNode etc.
-class _IO:
-    class ComfyNode: pass
-    class Schema: pass
-    class Float:
-        class Input:
-            def __init__(self, *a, **k): pass
-    class Int:
-        class Input:
-            def __init__(self, *a, **k): pass
-    class Combo:
-        class Input:
-            def __init__(self, *a, **k): pass
-    class Sampler:
-        class Output:
-            def __init__(self, *a, **k): pass
-    class NodeOutput:
-        def __init__(self, *a, **k): pass
-sys.modules["comfy_api.latest"].io = _IO()
+_ROOT = pathlib.Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_ROOT))
 
-# Now we can import the sampler
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-import torch  # noqa: E402
-from speed_sampler import (  # noqa: E402
-    dct2, idct2, _cos_taper_1d, _preserve_mask_2d, initial_downscale,
-    spectral_expand,
-)
+_spec = _iu.spec_from_file_location("spectral_utils", str(_ROOT / "spectral_utils.py"))
+_spectral = _iu.module_from_spec(_spec)
+_spec.loader.exec_module(_spectral)
+
+power_spectrum = _spectral.power_spectrum
+activation_time = _spectral.activation_time
+delta_optimal_transitions = _spectral.delta_optimal_transitions
+align_timestep = _spectral.align_timestep
+kappa = _spectral.kappa
+_dct_expand_np = _spectral._dct_expand_np
+_dwt_expand_np = _spectral._dwt_expand_np
+_fft_expand_np = _spectral._fft_expand_np
+validate_scales = _spectral.validate_scales
 
 
-class TestDCTRoundTrip(unittest.TestCase):
-    def test_dct_idct_identity(self):
-        torch.manual_seed(0)
-        x = torch.randn(2, 4, 16, 16)
-        x_rt = idct2(dct2(x))
-        self.assertLess((x_rt - x).abs().max().item(), 1e-4,
-                        msg="DCT followed by IDCT should reconstruct input")
+class TestPowerSpectrum(unittest.TestCase):
+    def test_shape(self):
+        A, beta = 203.6, 1.92
+        result = power_spectrum(10.0, A, beta)
+        expected = A * (10.0 ** (-beta))
+        self.assertAlmostEqual(result, expected, places=4)
 
-    def test_dct_idct_identity_5d_via_reshape(self):
-        torch.manual_seed(0)
-        x = torch.randn(1, 4, 3, 16, 16)
-        B, C, T, H, W = x.shape
-        x_4d = x.permute(0, 2, 1, 3, 4).reshape(B * T, C, H, W)
-        x_rt_4d = idct2(dct2(x_4d))
-        x_rt = x_rt_4d.reshape(B, T, C, H, W).permute(0, 2, 1, 3, 4)
-        self.assertLess((x_rt - x).abs().max().item(), 1e-4)
+    def test_basic_values(self):
+        A, beta = 100.0, 2.0
+        self.assertAlmostEqual(power_spectrum(1.0, A, beta), 100.0)
+        self.assertAlmostEqual(power_spectrum(2.0, A, beta), 25.0)
 
 
-class TestCosTaper(unittest.TestCase):
-    def test_taper_zero_is_hard_truncation(self):
-        w = _cos_taper_1d(8, kept=5, taper=0)
-        self.assertEqual(w.tolist(), [1, 1, 1, 1, 1, 0, 0, 0])
+class TestActivationTime(unittest.TestCase):
+    def test_output_range(self):
+        t = activation_time(P_omega=1.0, delta=0.01)
+        self.assertTrue(0 < t < 1, f"expected activation time in (0,1), got {t}")
 
-    def test_taper_smooth(self):
-        w = _cos_taper_1d(16, kept=8, taper=4)
-        # First 4 are ones (kept-taper=4 entries before ramp).
-        self.assertTrue(torch.allclose(w[:4], torch.ones(4)))
-        # Ramp from kept-taper to kept is monotone decreasing.
-        ramp = w[4:8]
-        self.assertTrue(((ramp[1:] - ramp[:-1]) <= 0).all().item())
-        # Outside kept = 0.
-        self.assertTrue(torch.allclose(w[8:], torch.zeros(8)))
+    def test_delta_rejects_ge_1(self):
+        with self.assertRaises(ValueError):
+            activation_time(1.0, delta=1.0)
+        with self.assertRaises(ValueError):
+            activation_time(1.0, delta=2.0)
 
-
-class TestSpectralExpandVariance(unittest.TestCase):
-    """If we hand in a pure-noise latent at sigma=σ₀, the post-expand latent
-    should still be (statistically) σ₀ * unit-noise: variance preserved up to
-    the κ rescaling already in the code."""
-
-    def _check_variance_preserved(self, scale_lo, scale_hi, taper, sigma):
-        torch.manual_seed(42)
-        H_full = W_full = 64
-        h_lo = round(H_full * scale_lo)
-        w_lo = round(W_full * scale_lo)
-        # Pure noise at sigma σ:
-        x_lo = sigma * torch.randn(1, 4, h_lo, w_lo)
-        x_hi, sigma_aligned = spectral_expand(
-            x_lo, sigma, scale_lo, scale_hi, H_full, W_full, taper=taper,
-        )
-        # Expected std at the new resolution should be sigma_aligned (close to σ
-        # for moderate r). With the κ rescaling in spectral_expand, we should
-        # observe roughly that.
-        observed = x_hi.std().item()
-        # Loose bound — this is a stochastic test on a small latent.
-        rel_err = abs(observed - float(sigma_aligned)) / max(float(sigma_aligned), 1e-3)
-        self.assertLess(rel_err, 0.4,
-                        f"std={observed:.4f} vs σ_aligned={float(sigma_aligned):.4f}"
-                        f" (scale {scale_lo}→{scale_hi}, taper={taper})")
-
-    def test_variance_taper_0(self):
-        self._check_variance_preserved(0.5, 0.75, taper=0, sigma=1.0)
-
-    def test_variance_taper_8(self):
-        self._check_variance_preserved(0.5, 0.75, taper=8, sigma=1.0)
-
-    def test_variance_full_expand_taper_0(self):
-        self._check_variance_preserved(0.75, 1.0, taper=0, sigma=1.0)
-
-    def test_variance_full_expand_taper_8(self):
-        self._check_variance_preserved(0.75, 1.0, taper=8, sigma=1.0)
+    def test_smaller_delta_delays(self):
+        t_big = activation_time(1.0, delta=0.1)
+        t_small = activation_time(1.0, delta=0.001)
+        self.assertGreater(t_small, t_big,
+                           msg="smaller delta gives larger t (activates later)")
 
 
-class TestInitialDownscale(unittest.TestCase):
+class TestDeltaOptimalTransitions(unittest.TestCase):
+    def test_num_transitions(self):
+        scales = [0.25, 0.5, 1.0]
+        t_stars = delta_optimal_transitions(scales, delta=0.01, A=203.6, beta=1.92,
+                                            H=64, W=64)
+        self.assertEqual(len(t_stars), 2)
+
+    def test_decreasing(self):
+        scales = [0.25, 0.5, 1.0]
+        t_stars = delta_optimal_transitions(scales, delta=0.01, A=203.6, beta=1.92,
+                                            H=64, W=64)
+        self.assertTrue(all(t_stars[i] >= t_stars[i + 1] for i in range(len(t_stars) - 1)),
+                        msg="transition times should be non-increasing")
+
+    def test_single_scale_no_transitions(self):
+        scales = [1.0]
+        t_stars = delta_optimal_transitions(scales, delta=0.01, A=203.6, beta=1.92,
+                                            H=64, W=64)
+        self.assertEqual(t_stars, [])
+
+
+class TestKappaAndAlign(unittest.TestCase):
+    def test_kappa_at_t0(self):
+        self.assertAlmostEqual(kappa(0.0, 2.0), 2.0)
+
+    def test_kappa_at_t1(self):
+        self.assertAlmostEqual(kappa(1.0, 2.0), 1.0)
+
+    def test_align_timestep(self):
+        t = 0.5
+        r = 2.0
+        self.assertAlmostEqual(align_timestep(t, r), t * kappa(t, r))
+
+
+class TestValidateScales(unittest.TestCase):
+    def test_valid(self):
+        validate_scales([0.25, 0.5, 1.0])
+
+    def test_empty(self):
+        with self.assertRaises(ValueError):
+            validate_scales([])
+
+    def test_not_ending_in_one(self):
+        with self.assertRaises(ValueError):
+            validate_scales([0.25, 0.75])
+
+    def test_not_increasing(self):
+        with self.assertRaises(ValueError):
+            validate_scales([0.5, 0.25, 1.0])
+
+    def test_out_of_range(self):
+        with self.assertRaises(ValueError):
+            validate_scales([0.0, 1.0])
+        with self.assertRaises(ValueError):
+            validate_scales([1.01, 1.0])
+
+
+class TestDCTExpandNp(unittest.TestCase):
     def test_output_shape(self):
-        x = torch.randn(1, 4, 64, 64)
-        x_low = initial_downscale(x, scale=0.5, taper=4)
-        self.assertEqual(tuple(x_low.shape), (1, 4, 32, 32))
+        x = np.random.randn(2, 4, 8, 8).astype(np.float32)
+        out = _dct_expand_np(x, (16, 16), t=0.5, seed=42)
+        self.assertEqual(out.shape, (2, 4, 16, 16))
 
-    def test_taper_zero_matches_hard_truncation(self):
-        torch.manual_seed(0)
-        x = torch.randn(1, 4, 32, 32)
-        # Hard truncation reference.
-        xi = dct2(x.float())[:, :, :16, :16]
-        ref = idct2(xi).to(x.dtype)
-        # initial_downscale with taper=0 must match exactly.
-        out = initial_downscale(x, scale=0.5, taper=0)
-        self.assertLess((out - ref).abs().max().item(), 1e-4)
+    def test_rejects_smaller_target(self):
+        x = np.random.randn(1, 4, 16, 16).astype(np.float32)
+        with self.assertRaises(ValueError):
+            _dct_expand_np(x, (8, 8), t=0.5, seed=42)
+
+    def test_preserves_low_frequencies_approximately(self):
+        x = np.random.randn(1, 1, 8, 8).astype(np.float32)
+        out = _dct_expand_np(x, (16, 16), t=0.0, seed=42)
+        # With t=0, the expanded high-freq coefficients are zero, so after
+        # IDCT the energy should be concentrated in the low frequencies.
+        coeffs_out = np.fft.fftshift(np.fft.fft2(out[0, 0], norm="ortho"))
+        low_band_energy = np.sum(np.abs(coeffs_out[4:12, 4:12]) ** 2)
+        total_energy = np.sum(np.abs(coeffs_out) ** 2)
+        self.assertGreater(low_band_energy / total_energy, 0.8)
+
+
+class TestDWTExpandNp(unittest.TestCase):
+    def test_output_shape(self):
+        x = np.random.randn(1, 4, 8, 8).astype(np.float32)
+        out = _dwt_expand_np(x, t=0.5, seed=42)
+        self.assertEqual(out.shape, (1, 4, 16, 16))
+
+    def test_with_zero_noise_preserves_average(self):
+        x = np.ones((1, 1, 4, 4), dtype=np.float32)
+        out = _dwt_expand_np(x, t=0.0, seed=42)
+        # With t=0, LH/HL/HH are all zero, so the result comes only from
+        # LL band. The mean won't be exactly 2x due to wavelet
+        # normalisation, but it should be proportional and non-zero.
+        self.assertEqual(out.shape, (1, 1, 8, 8))
+        self.assertGreater(float(out.mean()), 0.0)
+        self.assertLess(abs(float(out.mean())), 10.0)
+
+
+class TestFFTExpandNp(unittest.TestCase):
+    def test_output_shape(self):
+        x = np.random.randn(2, 3, 8, 8).astype(np.float32)
+        out = _fft_expand_np(x, (16, 16), t=0.5, seed=42)
+        self.assertEqual(out.shape, (2, 3, 16, 16))
+
+    def test_rejects_smaller_target(self):
+        x = np.random.randn(1, 4, 16, 16).astype(np.float32)
+        with self.assertRaises(ValueError):
+            _fft_expand_np(x, (8, 8), t=0.5, seed=42)
 
 
 if __name__ == "__main__":

@@ -1,53 +1,59 @@
 # ComfyUI-SPEED
 
-> Warning: This repository is "vibecoded" — it may contain experimental code, unconventional styles, or project-specific shortcuts.
+ComfyUI custom node for **SPEED** — Spectral Progressive Diffusion for faster sampling. Progressively expands the latent resolution during denoising, reducing computation while preserving visual quality.
 
-This repository provides a ComfyUI custom node that integrates the SPEED (Spectral Progressive Diffusion) idea for faster sampling. SPEED is a method for progressively growing image resolution during diffusion denoising to reduce computation while preserving visual quality. (only tested for anima model)
+**Official code:** https://github.com/howardhx/speed
 
-Key references
+Key references:
 
-- Original project page: https://howardxiao.ca/speed/
+- Project page: https://howardxiao.ca/speed/
 - Paper (PDF): https://howardxiao.ca/speed/paper/paper.pdf
 - arXiv: https://arxiv.org/abs/2605.18736
 
-Summary
+## Speed comparison (FLUX preset, default parameters)
 
-Workflow
+| SPEED sampler (this node)                                                 | Baseline (euler sampler) |
+| ------------------------------------------------------------------------- | ------------------------ |
+| `mode=delta_optimal` `model_preset=flux` `scales=0.5,1.0` `delta=0.01` `transform=dct` `base_sampler=euler`<br><br>![SPEED](images/anima_speed.png)<br><br>**20s**<br>**1.33x faster** | ![Original](images/anima_original.png)<br><br>**26.5s**<br>**1.00x** |
 
-![Workflow](images/workflow.png)
+## Usage
 
-Speed comparison (Anima, using the current default input config)
+1. Place this folder under your ComfyUI `custom_nodes` directory, then restart ComfyUI.
+2. Connect the **Sampler SPEED (Spectral Progressive Diffusion)** output to **SamplerCustomAdvanced**.
 
-| SPEED sampler (this node)                                              | Baseline (euler sampler)                                              |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `base_sampler=euler`<br>`start_scale=0.50`<br>`mid_scale=0.75`<br>`transition_1=0.80`<br>`transition_2=0.60`<br>`taper=8`<br><br>![SPEED](images/anima_speed.png)<br><br>**14.55s**<br>**1.82× faster** | ![Original](images/anima_original.png)<br><br>**26.51s**<br>**1.00×** |
+## Inputs
 
-Notes
-- **Artifacts:** This implementation can produce visible artifacts on some outputs; results may vary by model and prompt. Inspect the example images above for a representative comparison. `taper` (default `8`) crossfades the DCT seam to reduce ringing at transitions; set `taper=0` for the original hard-truncation behaviour.
-- **Torch compile:** Compiling with `torch.compile` did not improve performance for this implementation and in our tests made sampling slower than running without it. It may be possible for others to make the node work with `torch.compile`, but this remains a known / open issue.
-- Spectral Progressive Diffusion (SPEED) progressively increases resolution and injects higher-frequency components along the denoising trajectory, enabling training-free acceleration and a light fine-tuning recipe.
-- Personally i recommend using `transition_1` value of `0.8` and `transition_2` value of `0.7`. at 1.4x speed up for anima after many tries.
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `base_sampler` | combo | `euler` | Underlying ODE solver. Any `comfy.k_diffusion.sampling` sampler supported. |
+| `transform` | combo | `dct` | Spectral basis for expansion: `dct` (any ratio), `dwt` (2× only), `fft` (any ratio). |
+| `mode` | combo | `delta_optimal` | `delta_optimal` computes transitions from the power-spectrum preset. `manual` uses user-specified sigma thresholds. |
+| `model_preset` | combo | `flux` | Power-spectrum preset: `flux`, `wan21`, or `custom` (use `spectrum_A` / `spectrum_beta`). |
+| `scales` | string | `0.5,1.0` | Comma-separated resolution fractions ending at `1.0`. e.g. `0.25,0.5,1.0`. |
+| `delta` | float | `0.01` | Noise-dominated tolerance (Eq. 9). Smaller values delay transitions. |
+| `manual_sigmas` | string | `0.85` | Comma-separated sigma thresholds (one per transition). Used in `manual` mode. |
+| `spectrum_A` | float | `203.615` | Power-law amplitude (used when `model_preset=custom`). |
+| `spectrum_beta` | float | `1.915` | Power-law decay exponent (used when `model_preset=custom`). |
+| `seed` | int | `0` | Seed for spectral-noise padding at each transition. |
 
-Usage
+### delta_optimal mode (recommended)
 
-- Connect the `Sampler SPEED (Spectral Progressive)` output to `SamplerCustomAdvanced` like any other custom node in ComfyUI.
-- Place this folder under your ComfyUI `custom_nodes` directory, then restart ComfyUI.
+Set `model_preset` to `flux` or `wan21` and adjust `scales` and `delta`. Transition timing is computed automatically from the VAE power spectrum using Eq. 9 and Eq. 10 of the paper.
 
-Inputs
+### manual mode
 
-- `base_sampler`: which underlying ODE solver to use. Any sampler in `comfy.k_diffusion.sampling` is supported (`euler`, `euler_ancestral`, `heun`, `dpmpp_2m`, `dpmpp_3m_sde`, `er_sde`, `res_multistep`, `uni_pc`, `ipndm`, …). `euler` is the original SPEED behaviour. Multistep solvers reset to first-order at each SPEED transition (solver state across a resolution change is invalid anyway).
-- `start_scale`: the first resolution fraction. `0.5` means the sampler starts at half resolution, so it does the earliest denoising work on a smaller image.
-- `mid_scale`: the second resolution fraction. `0.75` means it expands to 75% resolution before going to full size.
-- `transition_1`: Controls the jump to mid-scale; lower values delay the expansion, forcing the model to spend more steps inside the low starting resolution.
-- `transition_2`: Controls the jump to full-scale; setting this too low delays the final expansion, forcing the model to bake fine textures into a mid scale latent which stretches into blocky artifacts.
-- `taper`: DCT-bin width of the cosine crossfade at the preserved↔noise boundary. `0` reproduces the original hard truncation (more ringing); higher values smooth the seam at the cost of slightly more low-pass. Default `8`.
+Set `mode=manual` and supply comma-separated sigma thresholds in `manual_sigmas` (one per transition between adjacent scales). Sigma decreases as denoising progresses, so the first threshold should be larger than the last (e.g. `0.95,0.85` for three scales).
 
-Credits & license
+## Credits & license
 
-- This implementation links to and builds on the ideas from "Spectral Progressive Diffusion for Efficient Image and Video Generation" by Howard Xiao, Brian Chao, Lior Yariv, and Gordon Wetzstein. Please see the original project page and paper for full details, authorship, and license information.
-- Thanks to [acidmiku](https://github.com/acidmiku) for contributing the pluggable sampler dispatch, cosine taper crossfade, and DCT matrix cache.
+This implementation is based on and derived from the official SPEED repository by Howard Xiao et al.:
 
-BibTeX
+- **Official code:** https://github.com/howardhx/speed (BSD 3-Clause)
+- **Paper:** Xiao, H., Chao, B., Yariv, L., & Wetzstein, G. (2026). *Spectral Progressive Diffusion for Efficient Image and Video Generation.*
+
+Please see the original project page and repository for full authorship, details, and license information.
+
+## BibTeX
 
 ```
 @article{xiao2026spectral,
