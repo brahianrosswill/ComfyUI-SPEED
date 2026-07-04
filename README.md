@@ -10,6 +10,10 @@ Key references:
 - Paper (PDF): https://howardxiao.ca/speed/paper/paper.pdf
 - arXiv: https://arxiv.org/abs/2605.18736
 
+Workflow:
+
+![Workflow](images/workflow.png)
+
 ## Speed comparison (FLUX preset, default parameters)
 
 | SPEED sampler (this node)                                                 | Baseline (euler sampler) |
